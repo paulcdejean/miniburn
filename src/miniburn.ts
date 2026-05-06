@@ -13,15 +13,15 @@ export async function main(ns: NS) {
     typeof ns.args[0] === "string" &&
     remote_types.has(ns.args[0])
   ) {
-    remotesMode(ns)
+    remotesMode(ns);
   } else if ((ns.getRunningScript()?.dynamicRamUsage ?? 0) < 32) {
-    limitedMode(ns)
+    limitedMode(ns);
   } else {
-    batcherMode(ns)
+    batcherMode(ns);
   }
 }
 
-type Network = Map<string, Required<Server>>
+type Network = Map<string, Required<Server>>;
 
 async function remotesMode(ns: NS) {}
 
@@ -29,22 +29,22 @@ async function remotesMode(ns: NS) {}
  * This limited mode of the batcher is designed just for initial bootstrapping, and is very RAM constrained.
  */
 async function limitedMode(ns: NS) {
-  ns.tprint("Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.")
+  ns.tprint(
+    "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
+  );
 
-  let network: Network = initNetwork(ns)
+  let network: Network = initNetwork(ns);
 
   while (true) {
-    pwnNetwork(ns, network)
+    pwnNetwork(ns, network);
   }
 }
 
 async function batcherMode(ns: NS) {}
 
-function initNetwork(ns: NS) : Network {
+function initNetwork(ns: NS): Network {
   const result = new Map();
-  return result
+  return result;
 }
 
-function pwnNetwork(ns: NS, network: Network) {
-
-}
+function pwnNetwork(ns: NS, network: Network) {}
