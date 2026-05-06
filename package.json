@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "sync": "bitburner-filesync"
+    "sync": "bitburner-filesync",
+    "lint": "prettier . --write"
   },
   "dependencies": {
     "bitburner-filesync": "^1.1.5"
