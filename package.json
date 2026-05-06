@@ -8,5 +8,8 @@
   },
   "dependencies": {
     "bitburner-filesync": "^1.1.5"
+  },
+  "devDependencies": {
+    "prettier": "3.8.3"
   }
 }
