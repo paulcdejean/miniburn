@@ -14,15 +14,21 @@ export async function main(ns: NS) {
     remote_types.has(ns.args[0])
   ) {
     remotesMode(ns);
-  } else if ((ns.getRunningScript()?.dynamicRamUsage ?? 0) < 32) {
+  } else if (ns.ramOverride() < 32) {
     limitedMode(ns);
   } else {
     batcherMode(ns);
   }
 }
 
+/**
+ * The servers accessible on the regular network, not including the darknet.
+ */
 type Network = Map<string, Required<Server>>;
 
+/**
+ * Simply will run the operation on the server. Often
+ */
 async function remotesMode(ns: NS) {}
 
 /**
@@ -33,18 +39,79 @@ async function limitedMode(ns: NS) {
     "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
   );
 
-  let network: Network = initNetwork(ns);
+  const network: Network = initNetwork(ns);
 
-  while (true) {
-    pwnNetwork(ns, network);
+  // Less RAM than actually getting the script name...
+  const myFilename: string = "miniburn.ts";
+
+  ns.atExit(() => {
+    for (const server of network.keys()) {
+      ns.scriptKill(myFilename, server);
+    }
+  });
+
+  {
+    const network = pwnNetwork(ns);
+    for (const [serverName, server] of network) {
+      if (server.hasAdminRights) {
+        ns.tprint(`${serverName} has ${server.maxRam}GB`);
+      }
+    }
   }
 }
 
+/**
+ * The main batcher!
+ */
 async function batcherMode(ns: NS) {}
 
+/**
+ * Populate the network without changing it.
+ */
 function initNetwork(ns: NS): Network {
-  const result = new Map();
+  const unscannedServers = new Array<string>("home");
+  const result: Network = new Map();
+  while (unscannedServers.length > 0) {
+    const serverToScan: string = unscannedServers.pop()!;
+    result.set(serverToScan, ns.getServer(serverToScan) as Required<Server>);
+    for (const server of ns.scan(serverToScan)) {
+      if (!result.has(server)) {
+        unscannedServers.push(server);
+      }
+    }
+  }
   return result;
 }
 
-function pwnNetwork(ns: NS, network: Network) {}
+/**
+ * Populate the network, but also attempt to get root on boxes.
+ */
+function pwnNetwork(ns: NS): Network {
+  const result: Network = initNetwork(ns);
+  for (const [serverName, server] of result) {
+    if (!server.hasAdminRights) {
+      ns.brutessh(serverName);
+      ns.ftpcrack(serverName);
+      ns.relaysmtp(serverName);
+      ns.httpworm(serverName);
+      ns.sqlinject(serverName);
+      ns.nuke(serverName);
+      if (ns.hasRootAccess(serverName)) {
+        server.hasAdminRights = true;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Pick the most ideal target to extract money from.
+ */
+function selectTarget(ns: NS, network: Network): string {
+  return "n00dles";
+}
+
+/**
+ * Extract money from the target.
+ */
+async function farmTarget(ns: NS, network: Network, target: String) {}
