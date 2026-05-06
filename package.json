@@ -1,0 +1,12 @@
+{
+  "name": "miniburn",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "sync": "bitburner-filesync"
+  },
+  "dependencies": {
+    "bitburner-filesync": "^1.1.5"
+  }
+}
