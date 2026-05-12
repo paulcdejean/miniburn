@@ -23,6 +23,14 @@ declare global {
    * @public
    */
   interface Server extends bitburner.Server {}
+
+  interface RunOptions extends bitburner.RunOptions {}
+
+  /**
+   * Options to affect the behavior of {@link NS.hack | hack}, {@link NS.grow | grow}, and {@link NS.weaken | weaken}.
+   * @public
+   */
+  interface BasicHGWOptions extends bitburner.BasicHGWOptions {}
 }
 
 export {};

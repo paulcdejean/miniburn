@@ -8,6 +8,16 @@ enum Action {
   share = "share",
 }
 
+/**
+ * We just hardcode these because they never change.
+ */
+const ActionRam = {
+  hack: 1.7,
+  grow: 1.75,
+  weaken: 1.75,
+  share: 4,
+};
+
 /** @param {NS} ns */
 /**
  * The entry point switches between 3 modes of running:
@@ -23,11 +33,11 @@ export async function main(ns: NS) {
     typeof ns.args[0] === "string" &&
     remote_types.has(ns.args[0])
   ) {
-    remotesMode(ns);
+    await remotesMode(ns);
   } else if (ns.ramOverride() < 32) {
-    limitedMode(ns);
+    await limitedMode(ns);
   } else {
-    mainMode(ns);
+    await mainMode(ns);
   }
 }
 
@@ -150,6 +160,7 @@ type RemainderAlgo = (
 async function remotesMode(ns: NS) {
   // TODO
   ns.print("Running in remotes mode???");
+  await ns.asleep(5000);
 }
 
 /**
@@ -160,7 +171,7 @@ async function limitedMode(ns: NS) {
   ns.tprint(
     "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
   );
-  runBatcherAlgo(ns, {
+  await runBatcherAlgo(ns, {
     buildNetwork: pwnNetwork,
     selectTarget: targetN00dles,
     pickHackThreads: fiveHackThreads,
@@ -175,6 +186,8 @@ async function limitedMode(ns: NS) {
  */
 async function mainMode(ns: NS) {
   ns.disableLog("ALL");
+  ns.tprint("WOW RAM!!! TODO");
+  await ns.asleep(5000);
   // TODO
 }
 
@@ -194,7 +207,28 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
     hackThreads,
   );
 
-  const execPromises = algo.execBatch(ns, network, target, cycleTime, batch);
+  const batchExecPromises = algo.execBatch(
+    ns,
+    network,
+    target,
+    cycleTime,
+    batch,
+  );
+  const remainderExecPromises = algo.useRemainder(
+    ns,
+    network,
+    target,
+    cycleTime,
+  );
+
+  const execPromises: ExecPromises = {
+    startupPromises: batchExecPromises.startupPromises.concat(
+      remainderExecPromises.startupPromises,
+    ),
+    completionPromises: batchExecPromises.completionPromises.concat(
+      remainderExecPromises.completionPromises,
+    ),
+  };
 
   ns.tprint(`Launching ${execPromises.startupPromises.length} scripts`);
   const batchStartTime = performance.now();
@@ -281,7 +315,7 @@ function basicHWGW(
   target: string,
   hackingThreads: number,
 ): { cycleTime: number; batch: Batch } {
-  const cycleTime = ns.getWeakenTime(target);
+  const cycleTime = ns.getWeakenTime(target) + 1000;
   return {
     cycleTime: cycleTime,
     batch: [], // TODO
@@ -304,14 +338,76 @@ function basicExec(
   };
 }
 
+/**
+ * Uses remaining ram to run weaken against the target.
+ */
 function remainderWeaken(
   ns: NS,
   network: Network,
   target: string,
   cycleTime: number,
 ): ExecPromises {
+  const startupPromises: Promise<void>[] = [];
+  const completionPromises: Promise<true | void>[] = [];
+  let port = 2000;
+
+  for (const [serverName, serverData] of network) {
+    if (serverData.maxRam - serverData.ramUsed >= ActionRam.weaken) {
+      const weakenThreads = Math.floor(
+        (serverData.maxRam - serverData.ramUsed) / ActionRam.weaken,
+      );
+
+      startupPromises.push(
+        new Promise<void>((resolve, reject) => {
+          setTimeout(() => {
+            const extraMsecs = cycleTime - ns.getWeakenTime(target);
+            if (extraMsecs < 0) {
+              reject(
+                new Error(
+                  `Negative extraMsecs with cycle time ${cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
+                ),
+              );
+            }
+            const runOptions: Required<RunOptions> = {
+              preventDuplicates: false,
+              ramOverride: ActionRam.weaken,
+              temporary: true,
+              threads: weakenThreads,
+            };
+            const actionOptions: Required<BasicHGWOptions> = {
+              additionalMsec: extraMsecs,
+              stock: false,
+              threads: weakenThreads,
+            };
+            const execResult = ns.exec(
+              ns.getScriptName(),
+              serverName,
+              runOptions,
+              Action.weaken,
+              target,
+              actionOptions.additionalMsec,
+              actionOptions.stock,
+              actionOptions.threads,
+              port,
+            );
+            if (execResult === 0) {
+              reject(
+                new Error(
+                  `Failed to exec ${Action.weaken} on ${serverName} with ${weakenThreads} threads`,
+                ),
+              );
+            }
+            completionPromises.push(ns.getPortHandle(port).nextWrite());
+            port++;
+            resolve();
+          });
+        }),
+      );
+    }
+  }
+
   return {
-    startupPromises: [],
-    completionPromises: [],
+    startupPromises: startupPromises,
+    completionPromises: completionPromises,
   };
 }
