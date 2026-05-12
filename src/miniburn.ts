@@ -156,6 +156,7 @@ async function remotesMode(ns: NS) {
  * This limited mode of the batcher is designed just for initial bootstrapping, and is very RAM constrained.
  */
 async function limitedMode(ns: NS) {
+  ns.disableLog("ALL");
   ns.tprint(
     "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
   );
@@ -173,6 +174,7 @@ async function limitedMode(ns: NS) {
  * The main batcher!
  */
 async function mainMode(ns: NS) {
+  ns.disableLog("ALL");
   // TODO
 }
 
