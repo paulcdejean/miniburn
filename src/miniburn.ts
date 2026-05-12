@@ -261,6 +261,12 @@ function initNetwork(ns: NS): Network {
       }
     }
   }
+
+  for (const [serverName] of result) {
+    if (serverName !== "home") {
+      ns.scp(ns.getScriptName(), serverName);
+    }
+  }
   return result;
 }
 
@@ -352,7 +358,10 @@ function remainderWeaken(
   let port = 2000;
 
   for (const [serverName, serverData] of network) {
-    if (serverData.maxRam - serverData.ramUsed >= ActionRam.weaken) {
+    if (
+      serverData.hasAdminRights &&
+      serverData.maxRam - serverData.ramUsed >= ActionRam.weaken
+    ) {
       const weakenThreads = Math.floor(
         (serverData.maxRam - serverData.ramUsed) / ActionRam.weaken,
       );
