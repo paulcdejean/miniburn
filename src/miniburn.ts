@@ -1,3 +1,13 @@
+/**
+ * The things a remote script can do.
+ */
+enum Action {
+  hack = "hack",
+  grow = "grow",
+  weaken = "weaken",
+  share = "share",
+}
+
 /** @param {NS} ns */
 /**
  * The entry point switches between 3 modes of running:
@@ -6,7 +16,7 @@
  * 3. Remotes mode. In order to keep this batcher as a single script. The 2GB remotes that run the HGW operations run in the same script.
  */
 export async function main(ns: NS) {
-  const remote_types = new Set(["hack", "grow", "weaken", "share"]);
+  const remote_types = new Set(Object.keys(Action));
 
   if (
     ns.args.length > 0 &&
@@ -17,19 +27,130 @@ export async function main(ns: NS) {
   } else if (ns.ramOverride() < 32) {
     limitedMode(ns);
   } else {
-    batcherMode(ns);
+    mainMode(ns);
   }
 }
 
 /**
- * The servers accessible on the regular network, not including the darknet.
+ * At a very high level, this is how a very basic batcher works!
+ * There's some intermediate concepts that this pattern won't support, such as optimizing for home CPU cores.
+ * There's also some advanced concepts that this pattern won't support such as just in time batching.
+ */
+interface BatcherAlgo {
+  // The first step in a basic batcher is to build out a network, which contains servers you can hack money from or run scripts on.
+  buildNetwork: NetworkBuilderAlgo;
+  // The second step in a basic batcher is to select a target on the network to extract money from.
+  selectTarget: TargetSelectionAlgo;
+  // The third step in a basic batcher is to select how many threads per batch to hack the target with.
+  pickHackThreads: HackingThreadAlgo;
+  // The fourth step in a basic batcher is to pick the shape of the batch to run.
+  pickBatchShape: BatchShapeAlgo;
+  // The fifth step in a basic batcher is to execute batches of that shape on the network.
+  execBatch: BatchExecAlgo;
+  // The sixth step in a basic batcher is to utilize the RAM that's still available after execing the batches.
+  useRemainder: RemainderAlgo;
+}
+
+/**
+ * The servers accessible on the network.
  */
 type Network = Map<string, Required<Server>>;
 
 /**
- * Simply will run the operation on the server. Often
+ * A network builder algorithm take no input and returns a Network.
+ * Basic example: Pwns servers.
+ * Intermediate exmaple: Pwns servers, purchases servers.
+ * Advanced example: Pwns servers, purchases servers, also leverages stasis linked darknet servers.
  */
-async function remotesMode(ns: NS) {}
+type NetworkBuilderAlgo = (ns: NS) => Network;
+
+/**
+ * A target selection algorithm picks which server on the network is optimal to extract money from.
+ * Basic example: Wildly guesses which one is optimal.
+ * Intermediate example: Uses formulas to figure out which server give the best returns.
+ * Advanced example: Optimally figures out which server gives the best returns, also accounting for exp growth.
+ */
+type TargetSelectionAlgo = (ns: NS, network: Network) => string;
+
+/**
+ * A hacking thread algorithm determines how many threads to hack the target with.
+ * Basic example: A hardcoded guess.
+ * Intermediate example: A more optimal guess based on RAM available on the network.
+ * Advanced example: Probabilistic calculations based on hacking chance, also accounting for exp growth.
+ */
+type HackingThreadAlgo = (ns: NS, network: Network, target: string) => number;
+
+/**
+ * A single hack, grow, weaken or share remote, run on a single server, with a specified number of threads, targetting a specific server.
+ */
+interface Operation {
+  target: string;
+  host: string;
+  threads: number;
+  action: Action;
+}
+
+/**
+ * A collection of Operations that are executed "at the same time."
+ */
+type Batch = Operation[];
+
+/**
+ * A batch shape algorithm determines what variety of batch to run against the target.
+ * Basic example: HWGW.
+ * Advanced example: I am unsure.
+ */
+type BatchShapeAlgo = (
+  ns: NS,
+  network: Network,
+  target: string,
+  hackingThreads: number,
+) => { cycleTime: number; batch: Batch };
+
+/**
+ * Promises that resolve when remote scripts start up, and complete.
+ */
+interface ExecPromises {
+  /** Promises that resolve once remote scripts finish launching. */
+  startupPromises: Promise<void>[];
+  /** Promises that resolve once remote scripts finish running. */
+  completionPromises: Promise<true | void>[];
+}
+
+/**
+ * A batch exec algorithm will run the batch on the network multiple times.
+ * Basic example: First fit found.
+ * Intermediate example: Will prefer to run smaller operations on servers with less RAM available.
+ * Advanced example: I am unsure.
+ */
+type BatchExecAlgo = (
+  ns: NS,
+  network: Network,
+  target: string,
+  cycleTime: number,
+  batch: Batch,
+) => ExecPromises;
+
+/**
+ * A remainder algorithm will determine what to do with the extra available RAM after running all the batches.
+ * Basic example: Use it for weaken, to gain extra exp.
+ * Intermediate example: Use it for share, if weaken wouldn't gain worthwhile exp.
+ * Advanced example: Preemptively weaken what the next target is likely to be.
+ */
+type RemainderAlgo = (
+  ns: NS,
+  network: Network,
+  target: string,
+  cycleTime: number,
+) => ExecPromises;
+
+/**
+ * Simply will run the operation.
+ */
+async function remotesMode(ns: NS) {
+  // TODO
+  ns.print("Running in remotes mode???");
+}
 
 /**
  * This limited mode of the batcher is designed just for initial bootstrapping, and is very RAM constrained.
@@ -38,32 +159,56 @@ async function limitedMode(ns: NS) {
   ns.tprint(
     "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
   );
-
-  const network: Network = initNetwork(ns);
-
-  // Less RAM than actually getting the script name...
-  const myFilename: string = "miniburn.ts";
-
-  ns.atExit(() => {
-    for (const server of network.keys()) {
-      ns.scriptKill(myFilename, server);
-    }
+  runBatcherAlgo(ns, {
+    buildNetwork: pwnNetwork,
+    selectTarget: targetN00dles,
+    pickHackThreads: fiveHackThreads,
+    pickBatchShape: basicHWGW,
+    execBatch: basicExec,
+    useRemainder: remainderWeaken,
   });
-
-  {
-    const network = pwnNetwork(ns);
-    for (const [serverName, server] of network) {
-      if (server.hasAdminRights) {
-        ns.tprint(`${serverName} has ${server.maxRam}GB`);
-      }
-    }
-  }
 }
 
 /**
  * The main batcher!
  */
-async function batcherMode(ns: NS) {}
+async function mainMode(ns: NS) {
+  // TODO
+}
+
+async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
+  const network = algo.buildNetwork(ns);
+
+  const target = algo.selectTarget(ns, network);
+  ns.tprint(`Batcher target is: ${target}`);
+
+  const hackThreads = algo.pickHackThreads(ns, network, target);
+  ns.tprint(`Hacking ${target} with ${hackThreads} threads per batch`);
+
+  const { cycleTime, batch } = algo.pickBatchShape(
+    ns,
+    network,
+    target,
+    hackThreads,
+  );
+
+  const execPromises = algo.execBatch(ns, network, target, cycleTime, batch);
+
+  ns.tprint(`Launching ${execPromises.startupPromises.length} scripts`);
+  const batchStartTime = performance.now();
+
+  await Promise.all(execPromises.startupPromises);
+  const scriptLaunchTime = performance.now();
+  ns.tprint(
+    `Scripts launched in ${ns.format.time(scriptLaunchTime - batchStartTime, true)}`,
+  );
+
+  await Promise.all(execPromises.completionPromises);
+  const batchFinishTime = performance.now();
+  ns.tprint(
+    `Batch finished in ${ns.format.time(scriptLaunchTime - batchFinishTime, true)}`,
+  );
+}
 
 /**
  * Populate the network without changing it.
@@ -105,13 +250,66 @@ function pwnNetwork(ns: NS): Network {
 }
 
 /**
- * Pick the most ideal target to extract money from.
+ * Hardcodes n00dles as a target.
  */
-function selectTarget(ns: NS, network: Network): string {
+function targetN00dles(ns: NS, network: Network): string {
   return "n00dles";
 }
 
 /**
- * Extract money from the target.
+ * Hardcodes 5 hacking threads. But doesn't hack if the target isn't weakened to min security.
  */
-async function farmTarget(ns: NS, network: Network, target: String) {}
+function fiveHackThreads(ns: NS, network: Network, target: string): number {
+  // For a basic algorithm like this we only watn to hack the target if it's at minimum security.
+  if (
+    network.get(target)?.minDifficulty !== network.get(target)?.hackDifficulty
+  ) {
+    return 0;
+  } else {
+    return 5;
+  }
+}
+
+/**
+ * Basic HWGW batch.
+ */
+function basicHWGW(
+  ns: NS,
+  network: Network,
+  target: string,
+  hackingThreads: number,
+): { cycleTime: number; batch: Batch } {
+  const cycleTime = ns.getWeakenTime(target);
+  return {
+    cycleTime: cycleTime,
+    batch: [], // TODO
+  };
+}
+
+/**
+ * Execs a batch on the first servers that will fit it.
+ */
+function basicExec(
+  ns: NS,
+  network: Network,
+  target: string,
+  cycleTime: number,
+  batch: Batch,
+): ExecPromises {
+  return {
+    startupPromises: [],
+    completionPromises: [],
+  };
+}
+
+function remainderWeaken(
+  ns: NS,
+  network: Network,
+  target: string,
+  cycleTime: number,
+): ExecPromises {
+  return {
+    startupPromises: [],
+    completionPromises: [],
+  };
+}
