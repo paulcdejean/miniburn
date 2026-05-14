@@ -425,15 +425,9 @@ function targetN00dles(ns: NS, network: Network): string {
 /**
  * Hardcodes 5 hacking threads. But doesn't hack if the target isn't weakened to min security.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function fiveHackThreads(ns: NS, network: Network, target: string): number {
-  // For a basic algorithm like this we only watn to hack the target if it's at minimum security.
-  if (
-    network.get(target)?.minDifficulty !== network.get(target)?.hackDifficulty
-  ) {
-    return 0;
-  } else {
-    return 5;
-  }
+  return 5;
 }
 
 /**
