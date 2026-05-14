@@ -303,7 +303,7 @@ async function limitedMode(ns: NS) {
     selectTarget: targetN00dles,
     pickHackThreads: fiveHackThreads,
     pickCycleTime: weakenTimeRoundedUp,
-    tasks: [growToMaxMoney, fullWeaken],
+    tasks: [basicWeakenToMinSecurity, basicGrowToMaxMoney, fullWeaken],
   });
 }
 
@@ -469,10 +469,42 @@ function fullWeaken(
   return result;
 }
 
+
 /**
- * Pairs grows and weakens to try and grow the target to max money.
+ * Crudely weakens the target to minimum security.
  */
-function growToMaxMoney(
+function basicWeakenToMinSecurity(
+  ns: NS,
+  network: Network,
+  target: string,
+  hackThreads: number,
+  farm: Farm,
+): number {
+  // TODO!!!
+  let result = 0;
+  for (const [serverName, serverData] of network) {
+    const serverRam = serverData.maxRam - serverData.ramUsed;
+    const weakenThreads = Math.floor(serverRam / ActionRam.weaken);
+    if (serverData.hasAdminRights && weakenThreads > 0) {
+      const weakenBatch: Batch = [
+        {
+          host: serverName,
+          threads: weakenThreads,
+          action: Action.weaken,
+        },
+      ];
+      if (farm.exec(ns, network, target, weakenBatch)) {
+        result = result + weakenBatch.length;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Crudely pairs grows and weakens to try and grow the target to max money.
+ */
+function basicGrowToMaxMoney(
   ns: NS,
   network: Network,
   target: string,

@@ -1,0 +1,3 @@
+Implement basic weaken to min security so it only will weaken a little.
+
+HWGW maybe!
