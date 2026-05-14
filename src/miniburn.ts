@@ -152,79 +152,89 @@ class Farm {
       this.startupPromises.push(
         new Promise<void>((resolve, reject) => {
           setTimeout(() => {
-            for (const operation of batch) {
-              let additionalMsecs = -1;
-              let ramOverride = -1;
-              // Want to buy rust match expression...
-              if (operation.action === Action.hack) {
-                // Extra half a millisecond fixes a silly rounding error
-                additionalMsecs = this.cycleTime - ns.getHackTime(target) + 0.5;
-                ramOverride = ActionRam.hack;
-              } else if (operation.action === Action.grow) {
-                // Extra half a millisecond fixes a silly rounding error
-                additionalMsecs = this.cycleTime - ns.getGrowTime(target) + 0.5;
-                ramOverride = ActionRam.grow;
-              } else if (operation.action === Action.weaken) {
-                // Extra half a millisecond fixes a silly rounding error
-                additionalMsecs =
-                  this.cycleTime - ns.getWeakenTime(target) + 0.5;
-                ramOverride = ActionRam.weaken;
-              } else if (operation.action === Action.share) {
-                // For share additionalMsecs is instead the number of times to loop the share
-                additionalMsecs = Math.floor(this.cycleTime / 10000);
-                ramOverride = ActionRam.share;
-              } else {
-                reject(new Error("typescript says this is unreachable"));
-              }
+            try {
+              for (const operation of batch) {
+                let additionalMsecs = -1;
+                let ramOverride = -1;
+                // Want to buy rust match expression...
+                if (operation.action === Action.hack) {
+                  // Extra half a millisecond fixes a silly rounding error
+                  additionalMsecs =
+                    this.cycleTime - ns.getHackTime(target) + 0.5;
+                  ramOverride = ActionRam.hack;
+                } else if (operation.action === Action.grow) {
+                  // Extra half a millisecond fixes a silly rounding error
+                  additionalMsecs =
+                    this.cycleTime - ns.getGrowTime(target) + 0.5;
+                  ramOverride = ActionRam.grow;
+                } else if (operation.action === Action.weaken) {
+                  // Extra half a millisecond fixes a silly rounding error
+                  additionalMsecs =
+                    this.cycleTime - ns.getWeakenTime(target) + 0.5;
+                  ramOverride = ActionRam.weaken;
+                } else if (operation.action === Action.share) {
+                  // For share additionalMsecs is instead the number of times to loop the share
+                  additionalMsecs = Math.floor(this.cycleTime / 10000);
+                  ramOverride = ActionRam.share;
+                } else {
+                  reject(new Error("typescript says this is unreachable"));
+                }
 
-              // Sanity check, additionalMsecs must be positive!
-              if (additionalMsecs < 0) {
-                reject(
-                  new Error(
-                    `Negative extraMsecs with cycle time ${this.cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
-                  ),
+                // Sanity check, additionalMsecs must be positive!
+                if (additionalMsecs < 0) {
+                  reject(
+                    new Error(
+                      `Negative extraMsecs with cycle time ${this.cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
+                    ),
+                  );
+                }
+
+                const runOptions: Required<RunOptions> = {
+                  preventDuplicates: false,
+                  ramOverride: ramOverride,
+                  temporary: true,
+                  threads: operation.threads,
+                };
+
+                const actionOptions: Required<BasicHGWOptions> = {
+                  additionalMsec: additionalMsecs,
+                  stock: false,
+                  threads: operation.threads,
+                };
+                ns.tprint(`Execing on ${operation.host}`);
+                const execResult = ns.exec(
+                  ns.getScriptName(),
+                  operation.host,
+                  runOptions,
+                  Action.weaken,
+                  target,
+                  actionOptions.additionalMsec,
+                  actionOptions.stock,
+                  actionOptions.threads,
+                  this.port,
                 );
-              }
 
-              const runOptions: Required<RunOptions> = {
-                preventDuplicates: false,
-                ramOverride: ramOverride,
-                temporary: true,
-                threads: operation.threads,
-              };
+                ns.tprint(`Exec result ${execResult}`);
 
-              const actionOptions: Required<BasicHGWOptions> = {
-                additionalMsec: additionalMsecs,
-                stock: false,
-                threads: operation.threads,
-              };
-              const execResult = ns.exec(
-                ns.getScriptName(),
-                operation.host,
-                runOptions,
-                Action.weaken,
-                target,
-                actionOptions.additionalMsec,
-                actionOptions.stock,
-                actionOptions.threads,
-                this.port,
-              );
-
-              // Sanity check, exec was successful.
-              if (execResult === 0) {
-                reject(
-                  new Error(
-                    `Failed to exec ${operation.action} on ${operation.host} with ${operation.threads} threads`,
-                  ),
+                // Sanity check, exec was successful.
+                if (execResult === 0) {
+                  reject(
+                    new Error(
+                      `Failed to exec ${operation.action} on ${operation.host} with ${operation.threads} threads`,
+                    ),
+                  );
+                }
+                this.completionPromises.push(
+                  ns.getPortHandle(this.port).nextWrite(),
                 );
+                this.port = this.port + 1;
+                this.scriptLimit = this.scriptLimit - 1;
               }
-              this.completionPromises.push(
-                ns.getPortHandle(this.port).nextWrite(),
-              );
-              this.port = this.port + 1;
-              this.scriptLimit = this.scriptLimit - 1;
+            } catch (error) {
+              // This pattern is valid, eslint is being annoying.
+              // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+              reject(error);
             }
-
             resolve();
           });
         }),
@@ -281,6 +291,7 @@ async function remotesMode(ns: NS) {
     );
   }
 
+  ns.tprint(`Writing port ${ns.args[5]}`);
   ns.writePort(ns.args[5] as number, 1);
   ns.clearPort(ns.args[5] as number);
 }
@@ -315,6 +326,15 @@ async function mainMode(ns: NS) {
 async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   const network = algo.buildNetwork(ns);
 
+  ns.atExit(() => {
+    for (const [server] of network) {
+      if (server !== "home") {
+        ns.scriptKill(ns.getScriptName(), server);
+      }
+    }
+    ns.scriptKill(ns.getScriptName());
+  });
+
   const target = algo.selectTarget(ns, network);
   ns.tprint(`Batcher target is: ${target}`);
 
@@ -329,7 +349,6 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
     ns.tprint(
       `Executed task ${task.name} launching ${scriptsLaunched} scripts`,
     );
-    task(ns, network, target, hackThreads, farm);
   }
 
   ns.tprint(`Launching ${farm.startupPromises.length} scripts`);
@@ -344,7 +363,11 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   await Promise.all(farm.completionPromises);
   const batchFinishTime = performance.now();
   ns.tprint(
-    `Batch finished in ${ns.format.time(scriptLaunchTime - batchFinishTime, true)}`,
+    `Batch finished in ${ns.format.time(batchFinishTime - scriptLaunchTime, true)}`,
+  );
+  const targetServer = ns.getServer(target) as Required<Server>;
+  ns.tprint(
+    `Target ${target} security ${targetServer.hackDifficulty} / ${targetServer.minDifficulty}, money ${targetServer.moneyAvailable} / ${targetServer.moneyMax}`,
   );
 }
 
@@ -442,15 +465,18 @@ function fullWeaken(
   for (const [serverName, serverData] of network) {
     const serverRam = serverData.maxRam - serverData.ramUsed;
     const weakenThreads = Math.floor(serverRam / ActionRam.weaken);
-    const weakenBatch: Batch = [
-      {
-        host: serverName,
-        threads: weakenThreads,
-        action: Action.weaken,
-      },
-    ];
-    if (farm.exec(ns, network, target, weakenBatch)) {
-      result = result + 1;
+    if (serverData.hasAdminRights && weakenThreads > 0) {
+      const weakenBatch: Batch = [
+        {
+          host: serverName,
+          threads: weakenThreads,
+          action: Action.weaken,
+        },
+      ];
+      if (farm.exec(ns, network, target, weakenBatch)) {
+        //ns.tprint(`${serverName}`)
+        result = result + 1;
+      }
     }
   }
   return result;
