@@ -2,6 +2,10 @@
 const SCRIPT_LIMIT = 400000;
 /** The first port number this batcher will use. The last port number is STARTING_PORT + SCRIPT_LIMIT */
 const STARTING_PORT = 2000;
+/** The ServerWeakenAmount constant in the games code. */
+const WEAKEN_AMOUNT = 0.05;
+/** The ServerFortifyAmount constant in the games code. */
+const HG_AMOUNT = 0.002;
 
 /**
  * The things a remote script can do.
@@ -286,6 +290,8 @@ async function remotesMode(ns: NS) {
     );
   }
 
+  ns.tprint(`DEBUG: ${ns.args[0]}`);
+
   ns.writePort(ns.args[5] as number, 1);
   ns.clearPort(ns.args[5] as number);
 }
@@ -299,11 +305,16 @@ async function limitedMode(ns: NS) {
     "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
   );
   await runBatcherAlgo(ns, {
-    buildNetwork: pwnNetwork,
+    buildNetwork: povertyPwnNetwork,
     selectTarget: targetN00dles,
     pickHackThreads: fiveHackThreads,
     pickCycleTime: weakenTimeRoundedUp,
-    tasks: [basicWeakenToMinSecurity, basicGrowToMaxMoney, fullWeaken],
+    tasks: [
+      basicHWGW,
+      basicWeakenToMinSecurity,
+      basicGrowToMaxMoney,
+      fullWeaken,
+    ],
   });
 }
 
@@ -344,10 +355,7 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
       `Executed task ${task.name} launching ${scriptsLaunched} scripts`,
     );
   }
-
-  ns.tprint(`Launching ${farm.startupPromises.length} scripts`);
   const batchStartTime = performance.now();
-
   await Promise.all(farm.startupPromises);
   const scriptLaunchTime = performance.now();
   ns.tprint(
@@ -359,9 +367,8 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   ns.tprint(
     `Batch finished in ${ns.format.time(batchFinishTime - scriptLaunchTime, true)}`,
   );
-  const targetServer = ns.getServer(target) as Required<Server>;
   ns.tprint(
-    `Target ${target} security ${targetServer.hackDifficulty} / ${targetServer.minDifficulty}, money ${targetServer.moneyAvailable} / ${targetServer.moneyMax}`,
+    `Target ${target} security ${ns.getServerSecurityLevel(target)} / ${ns.getServerMinSecurityLevel(target)}, money ${ns.getServerMoneyAvailable(target)} / ${ns.getServerMaxMoney(target)}`,
   );
 }
 
@@ -388,6 +395,79 @@ function initNetwork(ns: NS): Network {
   for (const [serverName] of result) {
     if (serverName !== "home") {
       ns.scp(ns.getScriptName(), serverName);
+    }
+  }
+  return result;
+}
+
+/**
+ * Populate the network without changing it, avoid ns.getServer to save on RAM.
+ */
+function povertyInitNetwork(ns: NS): Network {
+  const unscannedServers = new Array<string>("home");
+  const result: Network = new Map();
+  while (unscannedServers.length > 0) {
+    const serverToScan: string = unscannedServers.pop()!;
+    // Due to poverty many of these values will be wrong but it doesn't matter for our limited usage of this server.
+    const newServer: Required<Server> = {
+      hostname: serverToScan,
+      ip: "povrty",
+      sshPortOpen: false,
+      ftpPortOpen: false,
+      smtpPortOpen: false,
+      httpPortOpen: false,
+      sqlPortOpen: false,
+      hasAdminRights: ns.hasRootAccess(serverToScan),
+      cpuCores: 1,
+      isConnectedTo: false,
+      ramUsed: ns.getServerUsedRam(serverToScan),
+      maxRam: ns.getServerMaxRam(serverToScan),
+      organizationName: "poverty",
+      purchasedByPlayer: false,
+      backdoorInstalled: false,
+      baseDifficulty: ns.getServerMinSecurityLevel(serverToScan),
+      hackDifficulty: ns.getServerSecurityLevel(serverToScan),
+      minDifficulty: ns.getServerMinSecurityLevel(serverToScan),
+      moneyAvailable: ns.getServerMoneyAvailable(serverToScan),
+      moneyMax: ns.getServerMaxMoney(serverToScan),
+      numOpenPortsRequired: 5,
+      openPortCount: 0,
+      requiredHackingSkill: 9999,
+      serverGrowth: 0.67,
+    };
+    result.set(serverToScan, newServer);
+    for (const server of ns.scan(serverToScan)) {
+      if (!result.has(server)) {
+        unscannedServers.push(server);
+      }
+    }
+  }
+
+  for (const [serverName] of result) {
+    if (serverName !== "home") {
+      ns.scp(ns.getScriptName(), serverName);
+    }
+  }
+  return result;
+}
+
+/**
+ * Populate the network, but also attempt to get root on boxes.
+ * Avoid calling ns.getServer to save on RAM.
+ */
+function povertyPwnNetwork(ns: NS): Network {
+  const result: Network = povertyInitNetwork(ns);
+  for (const [serverName, server] of result) {
+    if (!server.hasAdminRights) {
+      ns.brutessh(serverName);
+      ns.ftpcrack(serverName);
+      ns.relaysmtp(serverName);
+      ns.httpworm(serverName);
+      ns.sqlinject(serverName);
+      ns.nuke(serverName);
+      if (ns.hasRootAccess(serverName)) {
+        server.hasAdminRights = true;
+      }
     }
   }
   return result;
@@ -440,6 +520,31 @@ function weakenTimeRoundedUp(ns: NS, network: Network, target: string): Farm {
 }
 
 /**
+ * Crude HWGW batching to extract money from the target.
+ */
+function basicHWGW(
+  ns: NS,
+  network: Network,
+  target: string,
+  hackThreads: number,
+  farm: Farm,
+): number {
+  let result = 0;
+
+  const amountHacked = ns.hackAnalyze(target) * hackThreads;
+  const growthRequired = 1 / (1 - amountHacked);
+  const growThreads = ns.growthAnalyze(target, growthRequired);
+
+  ns.tprint(`amountHacked = ${amountHacked}`);
+  ns.tprint(`growthRequired = ${growthRequired}`);
+  ns.tprint(`growThreads = ${growThreads}`);
+
+  result = result + 0;
+
+  return result;
+}
+
+/**
  * Consumes all remaining RAM to weaken the target.
  */
 function fullWeaken(
@@ -469,7 +574,6 @@ function fullWeaken(
   return result;
 }
 
-
 /**
  * Crudely weakens the target to minimum security.
  */
@@ -480,21 +584,30 @@ function basicWeakenToMinSecurity(
   hackThreads: number,
   farm: Farm,
 ): number {
+  const weakeningRequired =
+    ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
+  let weakenThreadsRequired = Math.ceil(weakeningRequired / WEAKEN_AMOUNT);
+
   // TODO!!!
   let result = 0;
   for (const [serverName, serverData] of network) {
     const serverRam = serverData.maxRam - serverData.ramUsed;
     const weakenThreads = Math.floor(serverRam / ActionRam.weaken);
     if (serverData.hasAdminRights && weakenThreads > 0) {
-      const weakenBatch: Batch = [
-        {
-          host: serverName,
-          threads: weakenThreads,
-          action: Action.weaken,
-        },
-      ];
-      if (farm.exec(ns, network, target, weakenBatch)) {
-        result = result + weakenBatch.length;
+      if (weakenThreadsRequired <= 0) {
+        return result;
+      } else {
+        const weakenBatch: Batch = [
+          {
+            host: serverName,
+            threads: Math.max(weakenThreadsRequired, weakenThreads),
+            action: Action.weaken,
+          },
+        ];
+        if (farm.exec(ns, network, target, weakenBatch)) {
+          result = result + weakenBatch.length;
+        }
+        weakenThreadsRequired = weakenThreadsRequired - weakenThreads;
       }
     }
   }
