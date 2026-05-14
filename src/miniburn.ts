@@ -118,13 +118,19 @@ type BatchShapeAlgo = (
 ) => { cycleTime: number; batch: Batch };
 
 /**
- * Promises that resolve when remote scripts start up, and complete.
+ * Represents a currently running batch.
+ * Startup promises resolve when HGW scripts are execed.
+ * Completion promises resolve when those scripts complete.
  */
-interface ExecPromises {
+interface Farm {
   /** Promises that resolve once remote scripts finish launching. */
   startupPromises: Promise<void>[];
   /** Promises that resolve once remote scripts finish running. */
   completionPromises: Promise<true | void>[];
+  /** The miliseconds that the batch operations are synched to. */
+  cycleTime: number;
+  /** A port number used for tracking completion of farm operations. */
+  port: number;
 }
 
 /**
@@ -137,9 +143,9 @@ type BatchExecAlgo = (
   ns: NS,
   network: Network,
   target: string,
-  cycleTime: number,
   batch: Batch,
-) => ExecPromises;
+  farm: Farm,
+) => void;
 
 /**
  * A remainder algorithm will determine what to do with the extra available RAM after running all the batches.
@@ -151,8 +157,8 @@ type RemainderAlgo = (
   ns: NS,
   network: Network,
   target: string,
-  cycleTime: number,
-) => ExecPromises;
+  farm: Farm,
+) => void;
 
 /**
  * Simply will run the operation.
@@ -207,39 +213,27 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
     hackThreads,
   );
 
-  const batchExecPromises = algo.execBatch(
-    ns,
-    network,
-    target,
-    cycleTime,
-    batch,
-  );
-  const remainderExecPromises = algo.useRemainder(
-    ns,
-    network,
-    target,
-    cycleTime,
-  );
-
-  const execPromises: ExecPromises = {
-    startupPromises: batchExecPromises.startupPromises.concat(
-      remainderExecPromises.startupPromises,
-    ),
-    completionPromises: batchExecPromises.completionPromises.concat(
-      remainderExecPromises.completionPromises,
-    ),
+  const farm: Farm = {
+    cycleTime: cycleTime,
+    startupPromises: [],
+    completionPromises: [],
+    port: 2000,
   };
 
-  ns.tprint(`Launching ${execPromises.startupPromises.length} scripts`);
+  const batchExecPromises = algo.execBatch(ns, network, target, batch, farm);
+  const remainderExecPromises = algo.useRemainder(ns, network, target, farm);
+
+  ns.tprint(`Launching ${farm.startupPromises.length} scripts`);
   const batchStartTime = performance.now();
 
-  await Promise.all(execPromises.startupPromises);
+  await Promise.all(farm.startupPromises);
   const scriptLaunchTime = performance.now();
   ns.tprint(
     `Scripts launched in ${ns.format.time(scriptLaunchTime - batchStartTime, true)}`,
   );
 
-  await Promise.all(execPromises.completionPromises);
+  ns.tprint(`DEBUG: ${farm.completionPromises.length}`);
+  await Promise.all(farm.completionPromises);
   const batchFinishTime = performance.now();
   ns.tprint(
     `Batch finished in ${ns.format.time(scriptLaunchTime - batchFinishTime, true)}`,
@@ -335,9 +329,10 @@ function basicExec(
   ns: NS,
   network: Network,
   target: string,
-  cycleTime: number,
   batch: Batch,
-): ExecPromises {
+  farm: Farm,
+) {
+  // TODO
   return {
     startupPromises: [],
     completionPromises: [],
@@ -347,16 +342,7 @@ function basicExec(
 /**
  * Uses remaining ram to run weaken against the target.
  */
-function remainderWeaken(
-  ns: NS,
-  network: Network,
-  target: string,
-  cycleTime: number,
-): ExecPromises {
-  const startupPromises: Promise<void>[] = [];
-  const completionPromises: Promise<true | void>[] = [];
-  let port = 2000;
-
+function remainderWeaken(ns: NS, network: Network, target: string, farm: Farm) {
   for (const [serverName, serverData] of network) {
     if (
       serverData.hasAdminRights &&
@@ -366,14 +352,14 @@ function remainderWeaken(
         (serverData.maxRam - serverData.ramUsed) / ActionRam.weaken,
       );
 
-      startupPromises.push(
+      farm.startupPromises.push(
         new Promise<void>((resolve, reject) => {
           setTimeout(() => {
-            const extraMsecs = cycleTime - ns.getWeakenTime(target);
+            const extraMsecs = farm.cycleTime - ns.getWeakenTime(target);
             if (extraMsecs < 0) {
               reject(
                 new Error(
-                  `Negative extraMsecs with cycle time ${cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
+                  `Negative extraMsecs with cycle time ${farm.cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
                 ),
               );
             }
@@ -397,7 +383,7 @@ function remainderWeaken(
               actionOptions.additionalMsec,
               actionOptions.stock,
               actionOptions.threads,
-              port,
+              farm.port,
             );
             if (execResult === 0) {
               reject(
@@ -406,17 +392,14 @@ function remainderWeaken(
                 ),
               );
             }
-            completionPromises.push(ns.getPortHandle(port).nextWrite());
-            port++;
+            farm.completionPromises.push(
+              ns.getPortHandle(farm.port).nextWrite(),
+            );
+            farm.port = farm.port + 1;
             resolve();
           });
         }),
       );
     }
   }
-
-  return {
-    startupPromises: startupPromises,
-    completionPromises: completionPromises,
-  };
 }
