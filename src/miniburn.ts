@@ -139,8 +139,6 @@ class Farm {
     this.startupPromises = [];
     this.completionPromises = [];
     this.cycleTime = cycleTime;
-    // This is just a random high number, so that you can use lower numbers for other scripts.
-    // This is the lower bound, the upper bound is this plus the script limit.
     this.port = STARTING_PORT;
     this.scriptLimit = SCRIPT_LIMIT;
   }
@@ -205,7 +203,7 @@ class Farm {
                   ns.getScriptName(),
                   operation.host,
                   runOptions,
-                  Action.weaken,
+                  operation.action,
                   target,
                   actionOptions.additionalMsec,
                   actionOptions.stock,
@@ -305,7 +303,7 @@ async function limitedMode(ns: NS) {
     selectTarget: targetN00dles,
     pickHackThreads: fiveHackThreads,
     pickCycleTime: weakenTimeRoundedUp,
-    tasks: [fullWeaken],
+    tasks: [growToMaxMoney, fullWeaken],
   });
 }
 
@@ -470,8 +468,75 @@ function fullWeaken(
         },
       ];
       if (farm.exec(ns, network, target, weakenBatch)) {
-        //ns.tprint(`${serverName}`)
-        result = result + 1;
+        result = result + weakenBatch.length;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Pairs grows and weakens to try and grow the target to max money.
+ */
+function growToMaxMoney(
+  ns: NS,
+  network: Network,
+  target: string,
+  hackThreads: number,
+  farm: Farm,
+): number {
+  let result = 0;
+  let growThreads = 25;
+  while (growThreads > 0) {
+    let weakenThreads = 2;
+    if (growThreads <= 12) {
+      weakenThreads = 1;
+    }
+    const growRam = growThreads * ActionRam.grow;
+    const weakenRam = weakenThreads * ActionRam.weaken;
+
+    let growHost = "invalid";
+    let weakenHost = "invalid";
+    for (const [serverName, serverData] of network) {
+      const serverRam = serverData.maxRam - serverData.ramUsed;
+      if (serverData.hasAdminRights && serverRam >= growRam) {
+        growHost = serverName;
+        serverData.ramUsed = serverData.ramUsed + growRam;
+        break;
+      }
+    }
+    if (growHost === "invalid") {
+      growThreads = growThreads - 1;
+      continue;
+    } else {
+      for (const [serverName, serverData] of network) {
+        const serverRam = serverData.maxRam - serverData.ramUsed;
+        if (serverData.hasAdminRights && serverRam >= weakenRam) {
+          weakenHost = serverName;
+          serverData.ramUsed = serverData.ramUsed + weakenRam;
+          break;
+        }
+      }
+      if (weakenHost === "invalid") {
+        return result;
+      } else {
+        const growWeakenBatch: Batch = [
+          {
+            host: growHost,
+            threads: growThreads,
+            action: Action.grow,
+          },
+          {
+            host: weakenHost,
+            threads: weakenThreads,
+            action: Action.weaken,
+          },
+        ];
+        if (farm.exec(ns, network, target, growWeakenBatch)) {
+          result = result + growWeakenBatch.length;
+        } else {
+          return result;
+        }
       }
     }
   }
