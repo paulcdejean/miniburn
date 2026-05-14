@@ -1,3 +1,8 @@
+/** The maximum number of scripts that can be launched by this batcher. For stability purposes. */
+const SCRIPT_LIMIT = 400000;
+/** The first port number this batcher will use. The last port number is STARTING_PORT + SCRIPT_LIMIT */
+const STARTING_PORT = 2000;
+
 /**
  * The things a remote script can do.
  */
@@ -53,12 +58,10 @@ interface BatcherAlgo {
   selectTarget: TargetSelectionAlgo;
   // The third step in a basic batcher is to select how many threads per batch to hack the target with.
   pickHackThreads: HackingThreadAlgo;
-  // The fourth step in a basic batcher is to pick the shape of the batch to run.
-  pickBatchShape: BatchShapeAlgo;
-  // The fifth step in a basic batcher is to execute batches of that shape on the network.
-  execBatch: BatchExecAlgo;
-  // The sixth step in a basic batcher is to utilize the RAM that's still available after execing the batches.
-  useRemainder: RemainderAlgo;
+  // The fourth step in a basic batcher is to pick the cycle time.
+  pickCycleTime: CycleTimeAlgo;
+  // The final step in a basic batcher, is to run the batcher tasks. For example weakening or HWGW farming.
+  tasks: BatcherTask[];
 }
 
 /**
@@ -91,12 +94,22 @@ type TargetSelectionAlgo = (ns: NS, network: Network) => string;
 type HackingThreadAlgo = (ns: NS, network: Network, target: string) => number;
 
 /**
+ * A cycle time algorithm determines the time period operations can sync to.
+ * Basic example: Weaken time, maybe plus one second.
+ * Intermediate example: Round up to multiples of 10 seconds to incorporate sharing.
+ * Advanced example: Something to account for darknet something?
+ */
+type CycleTimeAlgo = (ns: NS, network: Network, target: string) => Farm;
+
+/**
  * A single hack, grow, weaken or share remote, run on a single server, with a specified number of threads, targetting a specific server.
  */
 interface Operation {
-  target: string;
+  /** The host that the operation runs on. */
   host: string;
+  /** The number of threads running the action. */
   threads: number;
+  /** The type of operation being run. */
   action: Action;
 }
 
@@ -106,23 +119,11 @@ interface Operation {
 type Batch = Operation[];
 
 /**
- * A batch shape algorithm determines what variety of batch to run against the target.
- * Basic example: HWGW.
- * Advanced example: I am unsure.
- */
-type BatchShapeAlgo = (
-  ns: NS,
-  network: Network,
-  target: string,
-  hackingThreads: number,
-) => { cycleTime: number; batch: Batch };
-
-/**
  * Represents a currently running batch.
  * Startup promises resolve when HGW scripts are execed.
  * Completion promises resolve when those scripts complete.
  */
-interface Farm {
+class Farm {
   /** Promises that resolve once remote scripts finish launching. */
   startupPromises: Promise<void>[];
   /** Promises that resolve once remote scripts finish running. */
@@ -131,42 +132,157 @@ interface Farm {
   cycleTime: number;
   /** A port number used for tracking completion of farm operations. */
   port: number;
+  /** A hard limit on the number of scripts launched by this, for the sake of stability. */
+  scriptLimit: number;
+
+  constructor(cycleTime: number) {
+    this.startupPromises = [];
+    this.completionPromises = [];
+    this.cycleTime = cycleTime;
+    // This is just a random high number, so that you can use lower numbers for other scripts.
+    // This is the lower bound, the upper bound is this plus the script limit.
+    this.port = STARTING_PORT;
+    this.scriptLimit = SCRIPT_LIMIT;
+  }
+
+  exec(ns: NS, network: Network, target: string, batch: Batch): boolean {
+    if (this.scriptLimit < batch.length) {
+      return false;
+    } else {
+      this.startupPromises.push(
+        new Promise<void>((resolve, reject) => {
+          setTimeout(() => {
+            for (const operation of batch) {
+              let additionalMsecs = -1;
+              let ramOverride = -1;
+              // Want to buy rust match expression...
+              if (operation.action === Action.hack) {
+                // Extra half a millisecond fixes a silly rounding error
+                additionalMsecs = this.cycleTime - ns.getHackTime(target) + 0.5;
+                ramOverride = ActionRam.hack;
+              } else if (operation.action === Action.grow) {
+                // Extra half a millisecond fixes a silly rounding error
+                additionalMsecs = this.cycleTime - ns.getGrowTime(target) + 0.5;
+                ramOverride = ActionRam.grow;
+              } else if (operation.action === Action.weaken) {
+                // Extra half a millisecond fixes a silly rounding error
+                additionalMsecs =
+                  this.cycleTime - ns.getWeakenTime(target) + 0.5;
+                ramOverride = ActionRam.weaken;
+              } else if (operation.action === Action.share) {
+                // For share additionalMsecs is instead the number of times to loop the share
+                additionalMsecs = Math.floor(this.cycleTime / 10000);
+                ramOverride = ActionRam.share;
+              } else {
+                reject(new Error("typescript says this is unreachable"));
+              }
+
+              // Sanity check, additionalMsecs must be positive!
+              if (additionalMsecs < 0) {
+                reject(
+                  new Error(
+                    `Negative extraMsecs with cycle time ${this.cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
+                  ),
+                );
+              }
+
+              const runOptions: Required<RunOptions> = {
+                preventDuplicates: false,
+                ramOverride: ramOverride,
+                temporary: true,
+                threads: operation.threads,
+              };
+
+              const actionOptions: Required<BasicHGWOptions> = {
+                additionalMsec: additionalMsecs,
+                stock: false,
+                threads: operation.threads,
+              };
+              const execResult = ns.exec(
+                ns.getScriptName(),
+                operation.host,
+                runOptions,
+                Action.weaken,
+                target,
+                actionOptions.additionalMsec,
+                actionOptions.stock,
+                actionOptions.threads,
+                this.port,
+              );
+
+              // Sanity check, exec was successful.
+              if (execResult === 0) {
+                reject(
+                  new Error(
+                    `Failed to exec ${operation.action} on ${operation.host} with ${operation.threads} threads`,
+                  ),
+                );
+              }
+              this.completionPromises.push(
+                ns.getPortHandle(this.port).nextWrite(),
+              );
+              this.port = this.port + 1;
+              this.scriptLimit = this.scriptLimit - 1;
+            }
+
+            resolve();
+          });
+        }),
+      );
+      return true;
+    }
+  }
 }
 
 /**
- * A batch exec algorithm will run the batch on the network multiple times.
- * Basic example: First fit found.
- * Intermediate example: Will prefer to run smaller operations on servers with less RAM available.
- * Advanced example: I am unsure.
+ * A batcher task actually runs scripts.
+ * It returns the number of scripts launched.
+ * For example HWGW to farm money.
+ * The network will be modified reducing RAM available on servers.
+ * The farm will also be modified. Port will be increased, script limit will be decreased and promises will be pushed.
  */
-type BatchExecAlgo = (
+type BatcherTask = (
   ns: NS,
   network: Network,
   target: string,
-  batch: Batch,
+  hackThreads: number,
   farm: Farm,
-) => void;
-
-/**
- * A remainder algorithm will determine what to do with the extra available RAM after running all the batches.
- * Basic example: Use it for weaken, to gain extra exp.
- * Intermediate example: Use it for share, if weaken wouldn't gain worthwhile exp.
- * Advanced example: Preemptively weaken what the next target is likely to be.
- */
-type RemainderAlgo = (
-  ns: NS,
-  network: Network,
-  target: string,
-  farm: Farm,
-) => void;
+) => number;
 
 /**
  * Simply will run the operation.
  */
 async function remotesMode(ns: NS) {
-  // TODO
-  ns.print("Running in remotes mode???");
-  await ns.asleep(5000);
+  if (ns.args[0] === "hack") {
+    await ns.hack(ns.args[1] as string, {
+      additionalMsec: ns.args[2] as number,
+      stock: ns.args[3] as boolean,
+      threads: ns.args[4] as number,
+    });
+  } else if (ns.args[0] === "grow") {
+    await ns.grow(ns.args[1] as string, {
+      additionalMsec: ns.args[2] as number,
+      stock: ns.args[3] as boolean,
+      threads: ns.args[4] as number,
+    });
+  } else if (ns.args[0] === "weaken") {
+    await ns.weaken(ns.args[1] as string, {
+      additionalMsec: ns.args[2] as number,
+      stock: ns.args[3] as boolean,
+      threads: ns.args[4] as number,
+    });
+  } else if (ns.args[0] === "share") {
+    for (let n = 0; n < (ns.args[2] as number); n++) {
+      await ns.share();
+    }
+  } else {
+    throw Error(
+      "Invalid remotes mode action, valid actions are hack, grow, weaken and share",
+    );
+  }
+
+  ns.writePort(ns.args[5] as number, 1);
+  ns.clearPort(ns.args[5] as number);
 }
 
 /**
@@ -181,9 +297,8 @@ async function limitedMode(ns: NS) {
     buildNetwork: pwnNetwork,
     selectTarget: targetN00dles,
     pickHackThreads: fiveHackThreads,
-    pickBatchShape: basicHWGW,
-    execBatch: basicExec,
-    useRemainder: remainderWeaken,
+    pickCycleTime: weakenTimeRoundedUp,
+    tasks: [fullWeaken],
   });
 }
 
@@ -204,24 +319,18 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   ns.tprint(`Batcher target is: ${target}`);
 
   const hackThreads = algo.pickHackThreads(ns, network, target);
-  ns.tprint(`Hacking ${target} with ${hackThreads} threads per batch`);
-
-  const { cycleTime, batch } = algo.pickBatchShape(
-    ns,
-    network,
-    target,
-    hackThreads,
+  const farm = algo.pickCycleTime(ns, network, target);
+  ns.tprint(
+    `Batch will take approximately ${ns.format.time(farm.cycleTime, false)}`,
   );
 
-  const farm: Farm = {
-    cycleTime: cycleTime,
-    startupPromises: [],
-    completionPromises: [],
-    port: 2000,
-  };
-
-  const batchExecPromises = algo.execBatch(ns, network, target, batch, farm);
-  const remainderExecPromises = algo.useRemainder(ns, network, target, farm);
+  for (const task of algo.tasks) {
+    const scriptsLaunched = task(ns, network, target, hackThreads, farm);
+    ns.tprint(
+      `Executed task ${task.name} launching ${scriptsLaunched} scripts`,
+    );
+    task(ns, network, target, hackThreads, farm);
+  }
 
   ns.tprint(`Launching ${farm.startupPromises.length} scripts`);
   const batchStartTime = performance.now();
@@ -232,13 +341,16 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
     `Scripts launched in ${ns.format.time(scriptLaunchTime - batchStartTime, true)}`,
   );
 
-  ns.tprint(`DEBUG: ${farm.completionPromises.length}`);
   await Promise.all(farm.completionPromises);
   const batchFinishTime = performance.now();
   ns.tprint(
     `Batch finished in ${ns.format.time(scriptLaunchTime - batchFinishTime, true)}`,
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*                  Below here is example specific algorithms                 */
+/* -------------------------------------------------------------------------- */
 
 /**
  * Populate the network without changing it.
@@ -288,6 +400,7 @@ function pwnNetwork(ns: NS): Network {
 /**
  * Hardcodes n00dles as a target.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function targetN00dles(ns: NS, network: Network): string {
   return "n00dles";
 }
@@ -307,99 +420,38 @@ function fiveHackThreads(ns: NS, network: Network, target: string): number {
 }
 
 /**
- * Basic HWGW batch.
+ * A cycle time that is the wekaen time rounded up to the nearest second.
  */
-function basicHWGW(
-  ns: NS,
-  network: Network,
-  target: string,
-  hackingThreads: number,
-): { cycleTime: number; batch: Batch } {
-  const cycleTime = ns.getWeakenTime(target) + 1000;
-  return {
-    cycleTime: cycleTime,
-    batch: [], // TODO
-  };
+function weakenTimeRoundedUp(ns: NS, network: Network, target: string): Farm {
+  const weakenTime = ns.getWeakenTime(target);
+  const cycleTime = Math.ceil(weakenTime / 1000) * 1000;
+  return new Farm(cycleTime);
 }
 
 /**
- * Execs a batch on the first servers that will fit it.
+ * Consumes all remaining RAM to weaken the target.
  */
-function basicExec(
+function fullWeaken(
   ns: NS,
   network: Network,
   target: string,
-  batch: Batch,
+  hackThreads: number,
   farm: Farm,
-) {
-  // TODO
-  return {
-    startupPromises: [],
-    completionPromises: [],
-  };
-}
-
-/**
- * Uses remaining ram to run weaken against the target.
- */
-function remainderWeaken(ns: NS, network: Network, target: string, farm: Farm) {
+): number {
+  let result = 0;
   for (const [serverName, serverData] of network) {
-    if (
-      serverData.hasAdminRights &&
-      serverData.maxRam - serverData.ramUsed >= ActionRam.weaken
-    ) {
-      const weakenThreads = Math.floor(
-        (serverData.maxRam - serverData.ramUsed) / ActionRam.weaken,
-      );
-
-      farm.startupPromises.push(
-        new Promise<void>((resolve, reject) => {
-          setTimeout(() => {
-            const extraMsecs = farm.cycleTime - ns.getWeakenTime(target);
-            if (extraMsecs < 0) {
-              reject(
-                new Error(
-                  `Negative extraMsecs with cycle time ${farm.cycleTime} and weaken time ${ns.getWeakenTime(target)} for target ${target}`,
-                ),
-              );
-            }
-            const runOptions: Required<RunOptions> = {
-              preventDuplicates: false,
-              ramOverride: ActionRam.weaken,
-              temporary: true,
-              threads: weakenThreads,
-            };
-            const actionOptions: Required<BasicHGWOptions> = {
-              additionalMsec: extraMsecs,
-              stock: false,
-              threads: weakenThreads,
-            };
-            const execResult = ns.exec(
-              ns.getScriptName(),
-              serverName,
-              runOptions,
-              Action.weaken,
-              target,
-              actionOptions.additionalMsec,
-              actionOptions.stock,
-              actionOptions.threads,
-              farm.port,
-            );
-            if (execResult === 0) {
-              reject(
-                new Error(
-                  `Failed to exec ${Action.weaken} on ${serverName} with ${weakenThreads} threads`,
-                ),
-              );
-            }
-            farm.completionPromises.push(
-              ns.getPortHandle(farm.port).nextWrite(),
-            );
-            farm.port = farm.port + 1;
-            resolve();
-          });
-        }),
-      );
+    const serverRam = serverData.maxRam - serverData.ramUsed;
+    const weakenThreads = Math.floor(serverRam / ActionRam.weaken);
+    const weakenBatch: Batch = [
+      {
+        host: serverName,
+        threads: weakenThreads,
+        action: Action.weaken,
+      },
+    ];
+    if (farm.exec(ns, network, target, weakenBatch)) {
+      result = result + 1;
     }
   }
+  return result;
 }
