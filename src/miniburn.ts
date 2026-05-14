@@ -3,9 +3,9 @@ const SCRIPT_LIMIT = 400000;
 /** The first port number this batcher will use. The last port number is STARTING_PORT + SCRIPT_LIMIT */
 const STARTING_PORT = 2000;
 /** The ServerWeakenAmount constant in the games code. */
-const WEAKEN_AMOUNT = 0.05;
+const WEAKEN_SEC = 0.05;
 /** The ServerFortifyAmount constant in the games code. */
-const HG_AMOUNT = 0.002;
+const HG_SEC = 0.002;
 
 /**
  * The things a remote script can do.
@@ -534,10 +534,36 @@ function basicHWGW(
   const amountHacked = ns.hackAnalyze(target) * hackThreads;
   const growthRequired = 1 / (1 - amountHacked);
   const growThreads = ns.growthAnalyze(target, growthRequired);
+  const firstWeakenThreads = Math.ceil((hackThreads * HG_SEC) / WEAKEN_SEC);
+  const secondWeakenThreads = Math.ceil((growThreads * HG_SEC) / WEAKEN_SEC);
 
-  ns.tprint(`amountHacked = ${amountHacked}`);
-  ns.tprint(`growthRequired = ${growthRequired}`);
-  ns.tprint(`growThreads = ${growThreads}`);
+  let hackHost = "invalid";
+  let firstWeakenHost = "invalid";
+  let growHost = "invalid";
+  let secondWeakenHost = "invalid";
+
+  for (const [serverName, serverData] of network) {
+    if (serverData.hasAdminRights) {
+      let serverRam = serverData.maxRam - serverData.ramUsed;
+
+      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.hack) >= hackThreads ) {
+        hackHost = serverName
+        serverRam = serverRam - (ActionRam.hack * hackThreads)
+      }
+      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.weaken) >= firstWeakenThreads ) {
+        firstWeakenHost = serverName
+        serverRam = serverRam - (ActionRam.weaken * firstWeakenThreads)
+      }
+      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.grow) >= growThreads ) {
+        growHost = serverName
+        serverRam = serverRam - (ActionRam.hack * growThreads)
+      }
+      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.weaken) >= secondWeakenThreads ) {
+        secondWeakenHost = serverName
+        serverRam = serverRam - (ActionRam.hack * secondWeakenThreads)
+      }
+    }
+  }
 
   result = result + 0;
 
@@ -586,7 +612,7 @@ function basicWeakenToMinSecurity(
 ): number {
   const weakeningRequired =
     ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
-  let weakenThreadsRequired = Math.ceil(weakeningRequired / WEAKEN_AMOUNT);
+  let weakenThreadsRequired = Math.ceil(weakeningRequired / WEAKEN_SEC);
 
   // TODO!!!
   let result = 0;
