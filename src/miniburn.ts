@@ -201,7 +201,6 @@ class Farm {
                   stock: false,
                   threads: operation.threads,
                 };
-                ns.tprint(`Execing on ${operation.host}`);
                 const execResult = ns.exec(
                   ns.getScriptName(),
                   operation.host,
@@ -213,8 +212,6 @@ class Farm {
                   actionOptions.threads,
                   this.port,
                 );
-
-                ns.tprint(`Exec result ${execResult}`);
 
                 // Sanity check, exec was successful.
                 if (execResult === 0) {
@@ -291,7 +288,6 @@ async function remotesMode(ns: NS) {
     );
   }
 
-  ns.tprint(`Writing port ${ns.args[5]}`);
   ns.writePort(ns.args[5] as number, 1);
   ns.clearPort(ns.args[5] as number);
 }
