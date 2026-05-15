@@ -627,7 +627,10 @@ function targetN00dles(ns: NS, network: Network): string {
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function wildGuess(ns: NS, network: Network): string {
-  if (ns.getHackingLevel() < 100) {
+  if (
+    ns.getHackingLevel() < 100 ||
+    ns.getServerMoneyAvailable("home") < 10000000
+  ) {
     return "n00dles";
   } else if (ns.getHackingLevel() < 400) {
     return "joesguns";
@@ -636,8 +639,10 @@ function wildGuess(ns: NS, network: Network): string {
     ns.cloud.getServerLimit() !== ns.cloud.getServerNames().length
   ) {
     return "phantasy";
-  } else if (ns.hasRootAccess("omega-net")) {
+  } else if (ns.hasRootAccess("omega-net") && ns.getHackingLevel() < 1000) {
     return "omega-net";
+  } else if (ns.hasRootAccess("rho-construction")) {
+    return "rho-construction";
   } else {
     return "joesguns";
   }
@@ -659,7 +664,7 @@ function hardcodedHackThreads(
  */
 function weakenTimeRoundedUp(ns: NS, network: Network, target: string): Farm {
   const weakenTime = ns.getWeakenTime(target);
-  const cycleTime = Math.ceil(weakenTime / 1000) * 1000;
+  const cycleTime = Math.max(Math.ceil(weakenTime / 1000) * 1000, 10000);
   return new Farm(cycleTime);
 }
 
