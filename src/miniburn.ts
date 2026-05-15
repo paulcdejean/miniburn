@@ -44,8 +44,24 @@ export async function main(ns: NS) {
   ) {
     await remotesMode(ns);
   } else if (ns.ramOverride() <= 8) {
+    ns.atExit(() => {
+      for (const server of getServerList(ns)) {
+        if (server !== "home") {
+          ns.scriptKill(ns.getScriptName(), server);
+        }
+      }
+      ns.scriptKill(ns.getScriptName());
+    });
     await limitedMode(ns);
   } else {
+    ns.atExit(() => {
+      for (const server of getServerList(ns)) {
+        if (server !== "home") {
+          ns.scriptKill(ns.getScriptName(), server);
+        }
+      }
+      ns.scriptKill(ns.getScriptName());
+    });
     await mainMode(ns);
   }
 }
@@ -294,17 +310,11 @@ async function remotesMode(ns: NS) {
   ns.clearPort(ns.args[5] as number);
 }
 
+/**
+ * Actually runs the BatcherAlgo type.
+ */
 async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   const network = algo.buildNetwork(ns);
-
-  ns.atExit(() => {
-    for (const [server] of network) {
-      if (server !== "home") {
-        ns.scriptKill(ns.getScriptName(), server);
-      }
-    }
-    ns.scriptKill(ns.getScriptName());
-  });
 
   const target = algo.selectTarget(ns, network);
   ns.tprint(`Batcher target is: ${target}`);
@@ -343,6 +353,27 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   );
 }
 
+/**
+ * Return a list of all clearnet servers.
+ */
+function getServerList(ns: NS): Set<string> {
+  /**
+   * Populate the network without changing it.
+   */
+  const unscannedServers: string[] = ["home"];
+  const result = new Set<string>();
+  while (unscannedServers.length > 0) {
+    const serverToScan: string = unscannedServers.pop()!;
+    result.add(serverToScan);
+    for (const server of ns.scan(serverToScan)) {
+      if (!result.has(server)) {
+        unscannedServers.push(server);
+      }
+    }
+  }
+  return result;
+}
+
 /* -------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
@@ -376,18 +407,20 @@ async function limitedMode(ns: NS) {
  */
 async function mainMode(ns: NS) {
   ns.disableLog("ALL");
-  await runBatcherAlgo(ns, {
-    buildNetwork: pwnNetwork,
-    selectTarget: targetJoe,
-    pickHackThreads: hardcodedHackThreads,
-    pickCycleTime: weakenTimeRoundedUp,
-    tasks: [
-      basicHWGW,
-      basicWeakenToMinSecurity,
-      basicGrowToMaxMoney,
-      fullWeaken,
-    ],
-  });
+  while (true) {
+    await runBatcherAlgo(ns, {
+      buildNetwork: pwnNetwork,
+      selectTarget: targetJoe,
+      pickHackThreads: hardcodedHackThreads,
+      pickCycleTime: weakenTimeRoundedUp,
+      tasks: [
+        basicHWGW,
+        basicWeakenToMinSecurity,
+        basicGrowToMaxMoney,
+        fullWeaken,
+      ],
+    });
+  }
 }
 
 /**
@@ -527,11 +560,10 @@ function targetJoe(ns: NS, network: Network): string {
 /**
  * Hardcodes 5 hacking threads. But doesn't hack if the target isn't weakened to min security.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function hardcodedHackThreads(
-  ns: NS,
-  network: Network,
-  target: string,
+  ns: NS, // eslint-disable-line @typescript-eslint/no-unused-vars
+  network: Network, // eslint-disable-line @typescript-eslint/no-unused-vars
+  target: string, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): number {
   return 9;
 }
@@ -844,6 +876,11 @@ function basicGrowToMaxMoney(
   farm: Farm,
 ): number {
   let result = 0;
+
+  if (ns.getServerMoneyAvailable(target) === ns.getServerMaxMoney(target)) {
+    return 0;
+  }
+
   let growThreads = 25;
   while (growThreads > 0) {
     let weakenThreads = 2;
