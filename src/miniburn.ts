@@ -43,7 +43,7 @@ export async function main(ns: NS) {
     remote_types.has(ns.args[0])
   ) {
     await remotesMode(ns);
-  } else if (ns.ramOverride() < 32) {
+  } else if (ns.ramOverride() <= 8) {
     await limitedMode(ns);
   } else {
     await mainMode(ns);
@@ -290,42 +290,8 @@ async function remotesMode(ns: NS) {
     );
   }
 
-  ns.tprint(`DEBUG: ${ns.args[0]}`);
-
   ns.writePort(ns.args[5] as number, 1);
   ns.clearPort(ns.args[5] as number);
-}
-
-/**
- * This limited mode of the batcher is designed just for initial bootstrapping, and is very RAM constrained.
- */
-async function limitedMode(ns: NS) {
-  ns.disableLog("ALL");
-  ns.tprint(
-    "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
-  );
-  await runBatcherAlgo(ns, {
-    buildNetwork: povertyPwnNetwork,
-    selectTarget: targetN00dles,
-    pickHackThreads: fiveHackThreads,
-    pickCycleTime: weakenTimeRoundedUp,
-    tasks: [
-      basicHGW,
-      basicWeakenToMinSecurity,
-      basicGrowToMaxMoney,
-      fullWeaken,
-    ],
-  });
-}
-
-/**
- * The main batcher!
- */
-async function mainMode(ns: NS) {
-  ns.disableLog("ALL");
-  ns.tprint("WOW RAM!!! TODO");
-  await ns.asleep(5000);
-  // TODO
 }
 
 async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
@@ -378,8 +344,51 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                  Below here is example specific algorithms                 */
 /* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * This limited mode of the batcher is designed just for initial bootstrapping, and is very RAM constrained.
+ */
+async function limitedMode(ns: NS) {
+  ns.disableLog("ALL");
+  ns.tprint(
+    "Batcher running in limited mode. Upgrade your home RAM to 32GB or higher to unlock full functionality.",
+  );
+  await runBatcherAlgo(ns, {
+    buildNetwork: povertyPwnNetwork,
+    selectTarget: targetN00dles,
+    pickHackThreads: hardcodedHackThreads,
+    pickCycleTime: weakenTimeRoundedUp,
+    tasks: [
+      basicHGW,
+      basicWeakenToMinSecurity,
+      basicGrowToMaxMoney,
+      fullWeaken,
+    ],
+  });
+}
+
+/**
+ * The main batcher!
+ */
+async function mainMode(ns: NS) {
+  ns.disableLog("ALL");
+  await runBatcherAlgo(ns, {
+    buildNetwork: pwnNetwork,
+    selectTarget: targetJoe,
+    pickHackThreads: hardcodedHackThreads,
+    pickCycleTime: weakenTimeRoundedUp,
+    tasks: [
+      basicHWGW,
+      basicWeakenToMinSecurity,
+      basicGrowToMaxMoney,
+      fullWeaken,
+    ],
+  });
+}
 
 /**
  * Populate the network without changing it.
@@ -508,11 +517,23 @@ function targetN00dles(ns: NS, network: Network): string {
 }
 
 /**
+ * Hardcodes joesguns as a target.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function targetJoe(ns: NS, network: Network): string {
+  return "joesguns";
+}
+
+/**
  * Hardcodes 5 hacking threads. But doesn't hack if the target isn't weakened to min security.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function fiveHackThreads(ns: NS, network: Network, target: string): number {
-  return 5;
+function hardcodedHackThreads(
+  ns: NS,
+  network: Network,
+  target: string,
+): number {
+  return 9;
 }
 
 /**
@@ -764,6 +785,8 @@ function fullWeaken(
       if (farm.exec(ns, network, target, weakenBatch)) {
         result = result + weakenBatch.length;
       }
+      serverData.ramUsed =
+        serverData.ramUsed + weakenThreads * ActionRam.weaken;
     }
   }
   return result;
@@ -783,7 +806,6 @@ function basicWeakenToMinSecurity(
     ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
   let weakenThreadsRequired = Math.ceil(weakeningRequired / WEAKEN_SEC);
 
-  // TODO!!!
   let result = 0;
   for (const [serverName, serverData] of network) {
     const serverRam = serverData.maxRam - serverData.ramUsed;
@@ -795,13 +817,15 @@ function basicWeakenToMinSecurity(
         const weakenBatch: Batch = [
           {
             host: serverName,
-            threads: Math.max(weakenThreadsRequired, weakenThreads),
+            threads: Math.min(weakenThreadsRequired, weakenThreads),
             action: Action.weaken,
           },
         ];
         if (farm.exec(ns, network, target, weakenBatch)) {
           result = result + weakenBatch.length;
         }
+        serverData.ramUsed =
+          serverData.ramUsed + weakenThreads * ActionRam.weaken;
         weakenThreadsRequired = weakenThreadsRequired - weakenThreads;
       }
     }
