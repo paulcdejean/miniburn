@@ -685,7 +685,9 @@ function basicHWGW(
   }
 
   const amountHacked = ns.hackAnalyze(target) * hackThreads;
-  const growthRequired = 1 / (1 - amountHacked);
+  // Amount to grow over. Needed due to exp gain, and since this is a basic algorithm that doesn't use formulas.
+  const overGrowth = 1.1;
+  const growthRequired = (1 / (1 - amountHacked)) * overGrowth;
   const growThreads = Math.ceil(ns.growthAnalyze(target, growthRequired));
   const firstWeakenThreads = Math.ceil((hackThreads * HG_SEC) / WEAKEN_SEC);
   const secondWeakenThreads = Math.ceil((growThreads * HG_SEC) / WEAKEN_SEC);
@@ -1017,7 +1019,7 @@ function basicGrowToMaxMoney(
   }
 
   let growThreads = 25;
-  while (growThreads > 0) {
+  while (growThreads > 0 && farm.scriptLimit > 100) {
     let weakenThreads = 2;
     if (growThreads <= 12) {
       weakenThreads = 1;
