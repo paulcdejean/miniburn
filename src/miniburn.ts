@@ -1,11 +1,11 @@
 /** The maximum number of scripts that can be launched by this batcher. For stability purposes. */
-const SCRIPT_LIMIT = 400000;
+const SCRIPT_LIMIT = 400001;
 /** The first port number this batcher will use. The last port number is STARTING_PORT + SCRIPT_LIMIT */
 const STARTING_PORT = 2000;
 /** The ServerWeakenAmount constant in the games code. */
 const WEAKEN_SEC = 0.05;
 /** The ServerFortifyAmount constant in the games code. */
-const HG_SEC = 0.002;
+const HG_SEC = 0.004;
 
 /**
  * The things a remote script can do.
@@ -167,6 +167,7 @@ class Farm {
     if (this.scriptLimit < batch.length) {
       return false;
     } else {
+      this.scriptLimit = this.scriptLimit - batch.length;
       this.startupPromises.push(
         new Promise<void>((resolve, reject) => {
           setTimeout(() => {
@@ -235,7 +236,8 @@ class Farm {
                 if (execResult === 0) {
                   reject(
                     new Error(
-                      `Failed to exec ${operation.action} on ${operation.host} with ${operation.threads} threads`,
+                      `Failed to exec ${operation.action} on ${operation.host} with ${operation.threads} threads\n` +
+                        `${JSON.stringify(ns.getServer(operation.host))}`,
                     ),
                   );
                 }
@@ -243,7 +245,6 @@ class Farm {
                   ns.getPortHandle(this.port).nextWrite(),
                 );
                 this.port = this.port + 1;
-                this.scriptLimit = this.scriptLimit - 1;
               }
             } catch (error) {
               // This pattern is valid, eslint is being annoying.
@@ -316,10 +317,14 @@ async function remotesMode(ns: NS) {
 async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
   const network = algo.buildNetwork(ns);
 
-  const target = algo.selectTarget(ns, network);
-  ns.tprint(`Batcher target is: ${target}`);
+  // Is this needed so purchased servers "appear" ???
+  await ns.asleep(0);
 
+  const target = algo.selectTarget(ns, network);
   const hackThreads = algo.pickHackThreads(ns, network, target);
+  ns.tprint(
+    `Batcher target is: ${target} with hack percentage ${ns.format.percent(ns.hackAnalyze(target) * hackThreads)}`,
+  );
   const farm = algo.pickCycleTime(ns, network, target);
   ns.tprint(
     `Batch will take approximately ${ns.format.time(farm.cycleTime, false)}`,
@@ -559,6 +564,7 @@ function managePurchasedServers(ns: NS, network: Network): void {
       if (newServer !== "") {
         network.set(newServer, ns.getServer(newServer) as Required<Server>);
         purchasedServerCount++;
+        ns.scp(ns.getScriptName(), newServer);
       }
     } while (
       ns.getServerMoneyAvailable("home") >
@@ -742,6 +748,8 @@ function basicHWGW(
       ];
       if (farm.exec(ns, network, target, batch)) {
         result = result + batch.length;
+      } else {
+        return result;
       }
       const hackHostServer = network.get(hackHost)!;
       hackHostServer.ramUsed =
@@ -845,6 +853,8 @@ function basicHGW(
       ];
       if (farm.exec(ns, network, target, batch)) {
         result = result + batch.length;
+      } else {
+        return result;
       }
       const hackHostServer = network.get(hackHost)!;
       hackHostServer.ramUsed =
@@ -883,6 +893,8 @@ function fullWeaken(
       ];
       if (farm.exec(ns, network, target, weakenBatch)) {
         result = result + weakenBatch.length;
+      } else {
+        return result;
       }
       serverData.ramUsed =
         serverData.ramUsed + weakenThreads * ActionRam.weaken;
@@ -915,6 +927,8 @@ function shareExtra(
       ];
       if (farm.exec(ns, network, target, batch)) {
         result = result + batch.length;
+      } else {
+        return result;
       }
       serverData.ramUsed = serverData.ramUsed + shareThreads * ActionRam.share;
     }
@@ -932,11 +946,18 @@ function basicWeakenToMinSecurity(
   hackThreads: number,
   farm: Farm,
 ): number {
+  let result = 0;
+
+  if (
+    ns.getServerSecurityLevel(target) === ns.getServerMinSecurityLevel(target)
+  ) {
+    return result;
+  }
+
   const weakeningRequired =
     ns.getServerSecurityLevel(target) - ns.getServerMinSecurityLevel(target);
   let weakenThreadsRequired = Math.ceil(weakeningRequired / WEAKEN_SEC);
 
-  let result = 0;
   for (const [serverName, serverData] of network) {
     const serverRam = serverData.maxRam - serverData.ramUsed;
     const weakenThreads = Math.floor(serverRam / ActionRam.weaken);
@@ -953,6 +974,8 @@ function basicWeakenToMinSecurity(
         ];
         if (farm.exec(ns, network, target, weakenBatch)) {
           result = result + weakenBatch.length;
+        } else {
+          return result;
         }
         serverData.ramUsed =
           serverData.ramUsed + weakenThreads * ActionRam.weaken;
