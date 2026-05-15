@@ -631,8 +631,15 @@ function wildGuess(ns: NS, network: Network): string {
     return "n00dles";
   } else if (ns.getHackingLevel() < 400) {
     return "joesguns";
-  } else {
+  } else if (
+    ns.hasRootAccess("phantasy") &&
+    ns.cloud.getServerLimit() !== ns.cloud.getServerNames().length
+  ) {
     return "phantasy";
+  } else if (ns.hasRootAccess("omega-net")) {
+    return "omega-net";
+  } else {
+    return "joesguns";
   }
 }
 
