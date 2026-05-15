@@ -1,5 +1,5 @@
 /** The maximum number of scripts that can be launched by this batcher. For stability purposes. */
-const SCRIPT_LIMIT = 400001;
+const SCRIPT_LIMIT = 400100;
 /** The first port number this batcher will use. The last port number is STARTING_PORT + SCRIPT_LIMIT */
 const STARTING_PORT = 2000;
 /** The ServerWeakenAmount constant in the games code. */
@@ -416,7 +416,7 @@ async function mainMode(ns: NS) {
   while (true) {
     await runBatcherAlgo(ns, {
       buildNetwork: pwnAndPurchase,
-      selectTarget: targetJoe,
+      selectTarget: wildGuess,
       pickHackThreads: hardcodedHackThreads,
       pickCycleTime: weakenTimeRoundedUp,
       tasks: [
@@ -626,8 +626,14 @@ function targetN00dles(ns: NS, network: Network): string {
  * Hardcodes joesguns as a target.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function targetJoe(ns: NS, network: Network): string {
-  return "joesguns";
+function wildGuess(ns: NS, network: Network): string {
+  if (ns.getHackingLevel() < 100) {
+    return "n00dles";
+  } else if (ns.getHackingLevel() < 400) {
+    return "joesguns";
+  } else {
+    return "phantasy";
+  }
 }
 
 /**
@@ -677,7 +683,7 @@ function basicHWGW(
   const firstWeakenThreads = Math.ceil((hackThreads * HG_SEC) / WEAKEN_SEC);
   const secondWeakenThreads = Math.ceil((growThreads * HG_SEC) / WEAKEN_SEC);
 
-  while (true) {
+  while (farm.scriptLimit > 100) {
     let hackHost = "invalid";
     let firstWeakenHost = "invalid";
     let growHost = "invalid";
@@ -706,7 +712,7 @@ function basicHWGW(
           Math.floor(serverRam / ActionRam.grow) >= growThreads
         ) {
           growHost = serverName;
-          serverRam = serverRam - ActionRam.hack * growThreads;
+          serverRam = serverRam - ActionRam.grow * growThreads;
         }
         if (
           secondWeakenHost === "invalid" &&
@@ -765,6 +771,7 @@ function basicHWGW(
         secondWeakenHostServer.ramUsed + ActionRam.weaken * secondWeakenThreads;
     }
   }
+  return result;
 }
 
 /**
