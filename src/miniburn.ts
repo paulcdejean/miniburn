@@ -310,7 +310,7 @@ async function limitedMode(ns: NS) {
     pickHackThreads: fiveHackThreads,
     pickCycleTime: weakenTimeRoundedUp,
     tasks: [
-      basicHWGW,
+      basicHGW,
       basicWeakenToMinSecurity,
       basicGrowToMaxMoney,
       fullWeaken,
@@ -356,6 +356,7 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
     );
   }
   const batchStartTime = performance.now();
+  const batchStartMoney = ns.getServerMoneyAvailable("home");
   await Promise.all(farm.startupPromises);
   const scriptLaunchTime = performance.now();
   ns.tprint(
@@ -364,11 +365,15 @@ async function runBatcherAlgo(ns: NS, algo: BatcherAlgo) {
 
   await Promise.all(farm.completionPromises);
   const batchFinishTime = performance.now();
+  const batchFinishMoney = ns.getServerMoneyAvailable("home");
   ns.tprint(
     `Batch finished in ${ns.format.time(batchFinishTime - scriptLaunchTime, true)}`,
   );
   ns.tprint(
     `Target ${target} security ${ns.getServerSecurityLevel(target)} / ${ns.getServerMinSecurityLevel(target)}, money ${ns.getServerMoneyAvailable(target)} / ${ns.getServerMaxMoney(target)}`,
+  );
+  ns.tprint(
+    `$${ns.format.number(batchFinishMoney - batchStartMoney)} money hacked`,
   );
 }
 
@@ -531,43 +536,207 @@ function basicHWGW(
 ): number {
   let result = 0;
 
+  // Only run this if target is prepped.
+  if (
+    ns.getServerMinSecurityLevel(target) !==
+      ns.getServerSecurityLevel(target) ||
+    ns.getServerMaxMoney(target) !== ns.getServerMoneyAvailable(target)
+  ) {
+    return result;
+  }
+
   const amountHacked = ns.hackAnalyze(target) * hackThreads;
   const growthRequired = 1 / (1 - amountHacked);
-  const growThreads = ns.growthAnalyze(target, growthRequired);
+  const growThreads = Math.ceil(ns.growthAnalyze(target, growthRequired));
   const firstWeakenThreads = Math.ceil((hackThreads * HG_SEC) / WEAKEN_SEC);
   const secondWeakenThreads = Math.ceil((growThreads * HG_SEC) / WEAKEN_SEC);
 
-  let hackHost = "invalid";
-  let firstWeakenHost = "invalid";
-  let growHost = "invalid";
-  let secondWeakenHost = "invalid";
+  while (true) {
+    let hackHost = "invalid";
+    let firstWeakenHost = "invalid";
+    let growHost = "invalid";
+    let secondWeakenHost = "invalid";
 
-  for (const [serverName, serverData] of network) {
-    if (serverData.hasAdminRights) {
-      let serverRam = serverData.maxRam - serverData.ramUsed;
+    for (const [serverName, serverData] of network) {
+      if (serverData.hasAdminRights) {
+        let serverRam = serverData.maxRam - serverData.ramUsed;
 
-      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.hack) >= hackThreads ) {
-        hackHost = serverName
-        serverRam = serverRam - (ActionRam.hack * hackThreads)
-      }
-      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.weaken) >= firstWeakenThreads ) {
-        firstWeakenHost = serverName
-        serverRam = serverRam - (ActionRam.weaken * firstWeakenThreads)
-      }
-      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.grow) >= growThreads ) {
-        growHost = serverName
-        serverRam = serverRam - (ActionRam.hack * growThreads)
-      }
-      if (hackHost === "invalid" && Math.floor(serverRam / ActionRam.weaken) >= secondWeakenThreads ) {
-        secondWeakenHost = serverName
-        serverRam = serverRam - (ActionRam.hack * secondWeakenThreads)
+        if (
+          hackHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.hack) >= hackThreads
+        ) {
+          hackHost = serverName;
+          serverRam = serverRam - ActionRam.hack * hackThreads;
+        }
+        if (
+          firstWeakenHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.weaken) >= firstWeakenThreads
+        ) {
+          firstWeakenHost = serverName;
+          serverRam = serverRam - ActionRam.weaken * firstWeakenThreads;
+        }
+        if (
+          growHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.grow) >= growThreads
+        ) {
+          growHost = serverName;
+          serverRam = serverRam - ActionRam.hack * growThreads;
+        }
+        if (
+          secondWeakenHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.weaken) >= secondWeakenThreads
+        ) {
+          secondWeakenHost = serverName;
+        }
       }
     }
+    if (
+      hackHost === "invalid" ||
+      firstWeakenHost === "invalid" ||
+      growHost === "invalid" ||
+      secondWeakenHost === "invalid"
+    ) {
+      return result;
+    } else {
+      const batch: Batch = [
+        {
+          host: hackHost,
+          threads: hackThreads,
+          action: Action.hack,
+        },
+        {
+          host: firstWeakenHost,
+          threads: firstWeakenThreads,
+          action: Action.weaken,
+        },
+        {
+          host: growHost,
+          threads: growThreads,
+          action: Action.grow,
+        },
+        {
+          host: secondWeakenHost,
+          threads: secondWeakenThreads,
+          action: Action.weaken,
+        },
+      ];
+      if (farm.exec(ns, network, target, batch)) {
+        result = result + batch.length;
+      }
+      const hackHostServer = network.get(hackHost)!;
+      hackHostServer.ramUsed =
+        hackHostServer.ramUsed + ActionRam.hack * hackThreads;
+      const firstWeakenHostServer = network.get(firstWeakenHost)!;
+      firstWeakenHostServer.ramUsed =
+        firstWeakenHostServer.ramUsed + ActionRam.weaken * firstWeakenThreads;
+      const growHostServer = network.get(growHost)!;
+      growHostServer.ramUsed =
+        growHostServer.ramUsed + ActionRam.grow * growThreads;
+      const secondWeakenHostServer = network.get(secondWeakenHost)!;
+      secondWeakenHostServer.ramUsed =
+        secondWeakenHostServer.ramUsed + ActionRam.weaken * secondWeakenThreads;
+    }
+  }
+}
+
+/**
+ * Crude HGW batching to extract money from the target.
+ * Note outside of n00dles this won't work because it won't grow enough.
+ */
+function basicHGW(
+  ns: NS,
+  network: Network,
+  target: string,
+  hackThreads: number,
+  farm: Farm,
+): number {
+  let result = 0;
+
+  // Only run this if target is prepped.
+  if (
+    ns.getServerMinSecurityLevel(target) !==
+      ns.getServerSecurityLevel(target) ||
+    ns.getServerMaxMoney(target) !== ns.getServerMoneyAvailable(target)
+  ) {
+    return result;
   }
 
-  result = result + 0;
+  const amountHacked = ns.hackAnalyze(target) * hackThreads;
+  const growthRequired = 1 / (1 - amountHacked);
+  const growThreads = Math.ceil(ns.growthAnalyze(target, growthRequired));
+  const weakenThreads = Math.ceil(
+    ((hackThreads + growThreads) * HG_SEC) / WEAKEN_SEC,
+  );
 
-  return result;
+  while (true) {
+    let hackHost = "invalid";
+    let weakenHost = "invalid";
+    let growHost = "invalid";
+
+    for (const [serverName, serverData] of network) {
+      if (serverData.hasAdminRights) {
+        let serverRam = serverData.maxRam - serverData.ramUsed;
+
+        if (
+          hackHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.hack) >= hackThreads
+        ) {
+          hackHost = serverName;
+          serverRam = serverRam - ActionRam.hack * hackThreads;
+        }
+        if (
+          growHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.grow) >= growThreads
+        ) {
+          growHost = serverName;
+          serverRam = serverRam - ActionRam.hack * growThreads;
+        }
+        if (
+          weakenHost === "invalid" &&
+          Math.floor(serverRam / ActionRam.weaken) >= weakenThreads
+        ) {
+          weakenHost = serverName;
+        }
+      }
+    }
+    if (
+      hackHost === "invalid" ||
+      growHost === "invalid" ||
+      weakenHost === "invalid"
+    ) {
+      return result;
+    } else {
+      const batch: Batch = [
+        {
+          host: hackHost,
+          threads: hackThreads,
+          action: Action.hack,
+        },
+        {
+          host: growHost,
+          threads: growThreads,
+          action: Action.grow,
+        },
+        {
+          host: weakenHost,
+          threads: weakenThreads,
+          action: Action.weaken,
+        },
+      ];
+      if (farm.exec(ns, network, target, batch)) {
+        result = result + batch.length;
+      }
+      const hackHostServer = network.get(hackHost)!;
+      hackHostServer.ramUsed =
+        hackHostServer.ramUsed + ActionRam.hack * hackThreads;
+      const growHostServer = network.get(growHost)!;
+      growHostServer.ramUsed =
+        growHostServer.ramUsed + ActionRam.grow * growThreads;
+      const weakenHostServer = network.get(weakenHost)!;
+      weakenHostServer.ramUsed =
+        weakenHostServer.ramUsed + ActionRam.weaken * weakenThreads;
+    }
+  }
 }
 
 /**
