@@ -623,7 +623,7 @@ function targetN00dles(ns: NS, network: Network): string {
 }
 
 /**
- * Hardcodes joesguns as a target.
+ * Wild guessing about hacking targets not using formulas.
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function wildGuess(ns: NS, network: Network): string {
