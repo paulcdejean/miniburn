@@ -418,6 +418,7 @@ async function mainMode(ns: NS) {
         basicHWGW,
         basicWeakenToMinSecurity,
         basicGrowToMaxMoney,
+        shareExtra,
         fullWeaken,
       ],
     });
@@ -428,21 +429,11 @@ async function mainMode(ns: NS) {
  * Populate the network without changing it.
  */
 function initNetwork(ns: NS): Network {
-  const unscannedServers = new Array<string>("home");
   const result: Network = new Map();
-  while (unscannedServers.length > 0) {
-    const serverToScan: string = unscannedServers.pop()!;
-    result.set(serverToScan, ns.getServer(serverToScan) as Required<Server>);
-    for (const server of ns.scan(serverToScan)) {
-      if (!result.has(server)) {
-        unscannedServers.push(server);
-      }
-    }
-  }
-
-  for (const [serverName] of result) {
-    if (serverName !== "home") {
-      ns.scp(ns.getScriptName(), serverName);
+  for (const server of getServerList(ns)) {
+    result.set(server, ns.getServer(server) as Required<Server>);
+    if (server !== "home") {
+      ns.scp(ns.getScriptName(), server);
     }
   }
   return result;
@@ -452,48 +443,37 @@ function initNetwork(ns: NS): Network {
  * Populate the network without changing it, avoid ns.getServer to save on RAM.
  */
 function povertyInitNetwork(ns: NS): Network {
-  const unscannedServers = new Array<string>("home");
   const result: Network = new Map();
-  while (unscannedServers.length > 0) {
-    const serverToScan: string = unscannedServers.pop()!;
-    // Due to poverty many of these values will be wrong but it doesn't matter for our limited usage of this server.
+  for (const server of getServerList(ns)) {
     const newServer: Required<Server> = {
-      hostname: serverToScan,
+      hostname: server,
       ip: "povrty",
       sshPortOpen: false,
       ftpPortOpen: false,
       smtpPortOpen: false,
       httpPortOpen: false,
       sqlPortOpen: false,
-      hasAdminRights: ns.hasRootAccess(serverToScan),
+      hasAdminRights: ns.hasRootAccess(server),
       cpuCores: 1,
       isConnectedTo: false,
-      ramUsed: ns.getServerUsedRam(serverToScan),
-      maxRam: ns.getServerMaxRam(serverToScan),
+      ramUsed: ns.getServerUsedRam(server),
+      maxRam: ns.getServerMaxRam(server),
       organizationName: "poverty",
       purchasedByPlayer: false,
       backdoorInstalled: false,
-      baseDifficulty: ns.getServerMinSecurityLevel(serverToScan),
-      hackDifficulty: ns.getServerSecurityLevel(serverToScan),
-      minDifficulty: ns.getServerMinSecurityLevel(serverToScan),
-      moneyAvailable: ns.getServerMoneyAvailable(serverToScan),
-      moneyMax: ns.getServerMaxMoney(serverToScan),
+      baseDifficulty: ns.getServerMinSecurityLevel(server),
+      hackDifficulty: ns.getServerSecurityLevel(server),
+      minDifficulty: ns.getServerMinSecurityLevel(server),
+      moneyAvailable: ns.getServerMoneyAvailable(server),
+      moneyMax: ns.getServerMaxMoney(server),
       numOpenPortsRequired: 5,
       openPortCount: 0,
       requiredHackingSkill: 9999,
       serverGrowth: 0.67,
     };
-    result.set(serverToScan, newServer);
-    for (const server of ns.scan(serverToScan)) {
-      if (!result.has(server)) {
-        unscannedServers.push(server);
-      }
-    }
-  }
-
-  for (const [serverName] of result) {
-    if (serverName !== "home") {
-      ns.scp(ns.getScriptName(), serverName);
+    result.set(server, newServer);
+    if (server !== "home") {
+      ns.scp(ns.getScriptName(), server);
     }
   }
   return result;
@@ -820,6 +800,37 @@ function fullWeaken(
       }
       serverData.ramUsed =
         serverData.ramUsed + weakenThreads * ActionRam.weaken;
+    }
+  }
+  return result;
+}
+
+/**
+ * Shares extra ram
+ */
+function shareExtra(
+  ns: NS,
+  network: Network,
+  target: string,
+  hackThreads: number,
+  farm: Farm,
+): number {
+  let result = 0;
+  for (const [serverName, serverData] of network) {
+    const serverRam = serverData.maxRam - serverData.ramUsed;
+    const shareThreads = Math.floor(serverRam / ActionRam.share);
+    if (serverData.hasAdminRights && shareThreads > 0) {
+      const batch: Batch = [
+        {
+          host: serverName,
+          threads: shareThreads,
+          action: Action.share,
+        },
+      ];
+      if (farm.exec(ns, network, target, batch)) {
+        result = result + batch.length;
+      }
+      serverData.ramUsed = serverData.ramUsed + shareThreads * ActionRam.share;
     }
   }
   return result;
