@@ -641,8 +641,13 @@ function wildGuess(ns: NS, network: Network): string {
     return "phantasy";
   } else if (ns.hasRootAccess("omega-net") && ns.getHackingLevel() < 1000) {
     return "omega-net";
-  } else if (ns.hasRootAccess("rho-construction")) {
+  } else if (
+    ns.hasRootAccess("rho-construction") &&
+    ns.getHackingLevel() < 2500
+  ) {
     return "rho-construction";
+  } else if (ns.hasRootAccess("4sigma")) {
+    return "4sigma";
   } else {
     return "joesguns";
   }
